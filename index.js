@@ -1,125 +1,129 @@
-const express = require('express')
-const cors = require('cors')
+const express = require('express');
+const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const app = express()
-const port = process.env.port || 3000;
 
-//middleware
+const app = express();
+const port = process.env.port || 5000;
 
 app.use(cors());
-app.use(express.json())
+app.use(express.json());
 
-//smartdbUser
-//th0Mjsq6rO2COPqB
-
-const uri = "mongodb+srv://smartdbUser:th0Mjsq6rO2COPqB@cluster0.nry6rnt.mongodb.net/?appName=Cluster0";
-
-
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
-
-app.get("/",(req,res)=>{
-    res.send("smart app server is running")
-})
-
-
+const uri = process.env.MONGO_URI;
+const client = new MongoClient(uri, { serverApi: ServerApiVersion.v1 });
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
+    const db = client.db('UtilityBillsDb');
+    const BillsCollection = db.collection('bills');
+    const PaidBillsCollection = db.collection('paid-bills');
 
-//create collection 
-const db =client.db("smart_db")
-const productsCollection=db.collection("products");
+    console.log("✅ Connected to MongoDB");
 
+    // GET all bills
+    app.get('/bills', async (req, res) => {
+      const bills = await BillsCollection.find().toArray();
+      res.json(bills);
+    });
 
-//get all products 
-app.get('/products',async(req,res)=>{
-  const cursor =productsCollection.find({});
-   const result = await cursor.toArray();
-   res.send(result);
-
-
-
-})
-//find a product 
-app.get('/products/:id',async(req,res)=>{
-  const id= req.params.id;
-  const query={_id: new ObjectId(id)};
-  const result= await productsCollection.findOne(query);
-  res.send(result)
-
-
-  
-
-})
-
-app.post('/products',async(req,res)=>{
-    const newProduct= req.body;
-    const result= await productsCollection.insertOne(newProduct);
-    res.send(result);
-    
-})
-// update the value 
-app.patch('/products/:id',async(req,res)=>{
-  const id=req.params.id;
-  const updatedProduct= req.body;
-  const query={_id: new ObjectId(id)}
-  const update={
-    $set:{
-      name:updatedProduct.name,
-      price:updatedProduct.price
-
-    }
+// GET only 6 bills (no sorting)
+app.get('/bills/limited/6', async (req, res) => {
+  try {
+    const bills = await BillsCollection.find().limit(6).toArray();
+    res.json(bills);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch limited bills", error });
   }
-  const result= await productsCollection.updateOne(query,update)
-  res.send(result)
+});
 
-
-})
-
-
-
-
-
-// delete the product ()
-app.delete('/products/:id',async(req,res)=>{
-
-  const id= req.params.id;
-  const query={_id: new ObjectId(id)}
-  const result =await productsCollection.deleteOne(query)
-  res.send(result);
-})
-
-
-
-
-
-
-
-
-
-
-
-
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
     
-    
+    // GET bill by ID
+    app.get('/bills/:id', async (req, res) => {
+      try {
+        const bill = await BillsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!bill) return res.status(404).json({ message: "Bill not found" });
+        res.json(bill);
+      } catch (error) {
+        res.status(500).json({ message: "Invalid ID", error });
+      }
+    });
+
+    // POST paid bill
+    app.post('/paid-bills', async (req, res) => {
+      try {
+        const paidBill = {
+          ...req.body,
+          createdAt: new Date()
+        };
+        const result = await PaidBillsCollection.insertOne(paidBill);
+        res.status(201).json({ 
+          message: "Payment recorded successfully", 
+          insertedId: result.insertedId 
+        });
+      } catch (error) {
+        res.status(500).json({ message: "Failed to record payment", error });
+      }
+    });
+
+    // GET paid bills by email
+    app.get('/paid-bills', async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email) {
+          return res.status(400).json({ message: "Email parameter is required" });
+        }
+        const bills = await PaidBillsCollection.find({ email }).toArray();
+        res.json(bills);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch paid bills", error });
+      }
+    });
+
+    // UPDATE paid bill by ID
+    app.put('/paid-bills/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+        
+        const result = await PaidBillsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { ...updateData, updatedAt: new Date() } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Bill not found" });
+        }
+
+        res.json({ message: "Bill updated successfully", result });
+      } catch (error) {
+        res.status(500).json({ message: "Failed to update bill", error });
+      }
+    });
+
+    // DELETE paid bill by ID
+    app.delete('/paid-bills/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        
+        const result = await PaidBillsCollection.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: "Bill not found" });
+        }
+
+        res.json({ message: "Bill deleted successfully", result });
+      } catch (error) {
+        res.status(500).json({ message: "Failed to delete bill", error });
+      }
+    });
+
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
   }
 }
+
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`smart server is running  on port ${port}`)
-})
+  console.log(`Server running on port ${port}`);
+});
